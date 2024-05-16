@@ -259,8 +259,8 @@ def divergenceLoss_wNormal_wKernelDensity(x, x_star_gen, config):
             divergence_loss = torch.abs(arg1 - arg2)
             # divergence_loss = arg1 - arg2
 
-        if config.ld:
-            normalization = config.ld * torch.square(
+        if config.lm:
+            normalization = config.lm * torch.square(
                 torch.mean(x_star_gen.squeeze(dim=2), dim=1)
                 - torch.mean(x[:, :, 0], dim=1)
             )
