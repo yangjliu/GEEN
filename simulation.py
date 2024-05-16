@@ -237,7 +237,7 @@ for k, v in simulations.items():
     x_star = None
     x_star_gen = None
 
-    for i in range(config["number_simulation"]):
+    for i in range(config.number_simulation):
         (
             x_train,
             x_star_train,
