@@ -1,24 +1,17 @@
 # Databricks notebook source
-import os
-import sys
 import numpy as np
-from scipy.stats import norm
-import pandas as pd
 import torch
 import copy
-from torch import nn, optim
-from torch.nn import functional as F
-from torch.distributions import Normal 
-from torch.utils.data import DataLoader, Dataset
+from torch import optim
 from sklearn.metrics import mean_squared_error
-import matplotlib.pyplot as plt
 
 import mlflow
-from hyperopt import fmin, rand, tpe, hp, SparkTrials, Trials, STATUS_OK, space_eval
+from hyperopt import fmin, rand, tpe, hp, SparkTrials, STATUS_OK
 from functools import partial
 
 from src.GEEN import *
 from src.simulationDataGen import get_simulation_data
+from src.train_validation import train_and_val_GEEN
 
 # COMMAND ----------
 
@@ -114,185 +107,6 @@ init_config = {
                }
 init_config = SimpleNamespace(**init_config)
 
-# COMMAND ----------
-
-def train_GEEN(config, verbose=False):
-    def train_one_epoch(epoch, model, train_dataloader, optimizer):
-        model.train()
-        train_loss = 0
-
-        for batch_idx, batch in enumerate(train_dataloader):
-            if config.with_xstar:
-                x, x_star = batch
-                x = x.to(config.device).double()
-                x_star = x_star.to(config.device).double()
-            else:
-                x, x_index = batch
-                x = x.to(config.device).double()
-
-            optimizer.zero_grad()
-            x_star_gen = model(x)
-
-            if config.is_normal:
-                divergence_loss, normalization = divergenceLoss_wNormal_wKernelDensity(
-                    x, x_star_gen, config
-                )
-            else:
-                divergence_loss = divergenceLoss_woNormal_wKernelDensity(x, x_star_gen, config)
-                normalization = 0
-
-            loss = torch.mean(divergence_loss + normalization)
-            loss.backward()
-            train_loss += loss.item()
-            
-            if config.clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip)
-            optimizer.step()
-
-            #if verbose:
-            #    if batch_idx % 1000 == 0:
-            #        print(
-            #            "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6e}".format(
-            #                epoch,
-            #                batch_idx * x.shape[0],
-            #                len(train_dataloader.dataset),
-            #                100.0 * batch_idx / len(train_dataloader),
-            #                loss.item() / x.shape[0],
-            #            )
-            #        )
-
-        return train_loss / len(train_dataloader.dataset)
-
-    def test_one_epoch(epoch, model, test_dataloader):
-        model.eval()
-        test_loss = 0
-
-        with torch.no_grad():
-            for i, batch in enumerate(test_dataloader):
-                if config.with_xstar:
-                    x, x_star = batch
-                    x = x.to(config.device).double()
-                    x_star = x_star.to(config.device).double()
-                else:
-                    x, x_index = batch
-                    x = x.to(config.device).double()
-                x_star_gen = model(x)
-                if config.is_normal:
-                    divergence_loss, normalization = divergenceLoss_wNormal_wKernelDensity(
-                        x, x_star_gen, config
-                    )
-                else:
-                    divergence_loss = divergenceLoss_woNormal_wKernelDensity(x, x_star_gen, config)
-                    normalization = 0
-                loss = torch.mean(divergence_loss + normalization)
-                test_loss += loss.item()
-
-        return test_loss / len(test_dataloader.dataset)
-
-    (
-        train_dataloader,
-        val_dataloader,
-        test_dataloader,
-        x_train,
-        x_star_train,
-        x_val,
-        x_star_val,
-        x_test,
-        x_star_test,
-    ) = get_simulation_data(config)
-
-    genModel = GenDNN(config).to(config.device).double()
-    optimizer = optim.Adam(genModel.parameters(), lr=config.learning_rate)
-
-    patience = config.patience
-    best_val_loss = np.inf
-    epoch_no = 0
-    for epoch in range(config.epochs):
-        train_loss = train_one_epoch(
-            epoch_no, genModel, train_dataloader, optimizer
-        )
-        val_loss = test_one_epoch(epoch_no, genModel, val_dataloader)
-        test_loss = test_one_epoch(epoch_no, genModel, test_dataloader)
-        if best_val_loss > val_loss:
-            best_val_loss = val_loss
-        else:
-            patience -= 1
-
-        if patience < 0:
-            break
-            
-        if verbose:
-            x_gen_test = (
-                genModel(
-                    torch.tensor(x_test, device=config.device).view(
-                        -1, 1, config.num_measurement
-                    )
-                )
-                .flatten()
-                .detach()
-                .cpu()
-                .numpy()
-            )   
-            mse = mean_squared_error(x_star_test, x_gen_test, squared=False)
-            corr = np.corrcoef(x_star_test, x_gen_test)[0, 1]   
-            print(
-                "====> Epoch: {} Test corr: {:.4f} Test mse: {:.4E} Test loss: {:.4E}".format(
-                    epoch_no, corr, mse, test_loss
-                )
-            )
-        epoch_no += 1
-
-    x_gen_train = (
-        genModel(
-            torch.tensor(x_train, device=config.device, dtype=torch.float64).view(
-                -1, 1, config.num_measurement
-            )
-        )
-        .flatten()
-        .detach()
-        .cpu()
-        .numpy()
-        )
-    x_gen_val = (
-        genModel(
-            torch.tensor(x_val, device=config.device, dtype=torch.float64).view(
-                -1, 1, config.num_measurement
-            )
-        )
-        .flatten()
-        .detach()
-        .cpu()
-        .numpy()
-        )
-    x_gen_test = (
-        genModel(
-            torch.tensor(x_test, device=config.device, dtype=torch.float64).view(
-                -1, 1, config.num_measurement
-            )
-        )
-        .flatten()
-        .detach()
-        .cpu()
-        .numpy()
-        )
-
-    mse = mean_squared_error(x_star_test, x_gen_test, squared=False)
-    corr = np.corrcoef(x_star_test, x_gen_test)[0, 1]
-
-    return (
-        x_train,
-        x_star_train,
-        x_gen_train,
-        x_val,
-        x_star_val,
-        x_gen_val,
-        x_test,
-        x_star_test,
-        x_gen_test,
-        test_loss,
-        mse,
-        corr,
-    )
 
 # COMMAND ----------
 
@@ -320,23 +134,62 @@ def train_GEEN_whyperopt(params, init_config):
     min_loss = np.inf
     min_mse = np.inf
     max_corr = -np.inf
+    
+    (
+        train_dataloader,
+        val_dataloader,
+        test_dataloader,
+        x_train,
+        x_star_train,
+        x_val,
+        x_star_val,
+        x_test,
+        x_star_test,
+    ) = get_simulation_data(config)
 
     with mlflow.start_run(nested=True):
         for i in range(config.number_simulation):
-            (
-                x_train,
-                x_star_train,
-                x_gen_train,
-                x_val,
-                x_star_val,
-                x_gen_val,
-                x_test,
-                x_star_test,
-                x_gen_test,
-                test_loss,
-                mse,
-                corr
-            ) = train_GEEN(config)
+            genModel = GenDNN(config).to(config.device).double()
+            
+            genModel, test_loss = train_and_val_GEEN(config, genModel, train_dataloader, val_dataloader, test_dataloader, (x_test, x_star_test))
+            
+            x_gen_train = (
+                genModel(
+                    torch.tensor(x_train, device=config.device, dtype=torch.float64).view(
+                        -1, 1, config.num_measurement
+                    )
+                )
+                .flatten()
+                .detach()
+                .cpu()
+                .numpy()
+                )
+            x_gen_val = (
+                genModel(
+                    torch.tensor(x_val, device=config.device, dtype=torch.float64).view(
+                        -1, 1, config.num_measurement
+                    )
+                )
+                .flatten()
+                .detach()
+                .cpu()
+                .numpy()
+                )
+            x_gen_test = (
+                genModel(
+                    torch.tensor(x_test, device=config.device, dtype=torch.float64).view(
+                        -1, 1, config.num_measurement
+                    )
+                )
+                .flatten()
+                .detach()
+                .cpu()
+                .numpy()
+                )
+
+            mse = mean_squared_error(x_star_test, x_gen_test, squared=False)
+            corr = np.corrcoef(x_star_test, x_gen_test)[0, 1]
+
             min_loss = min(min_loss, test_loss)
             max_corr = max(corr, max_corr)
             min_mse = min(min_mse, mse)
@@ -360,7 +213,7 @@ def train_GEEN_whyperopt(params, init_config):
 
 # COMMAND ----------
 
- if init_config.is_normal:
+if init_config.is_normal:
     hp_space =\
     {
             'lambda': hp.uniform('lambda', 0, 1),

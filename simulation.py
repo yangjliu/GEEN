@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from functools import partial
 from src.GEEN import *
 from src.simulationDataGen import get_simulation_data
+from src.train_validation import train_and_val_GEEN
 
 # COMMAND ----------
 
@@ -157,8 +158,48 @@ def simulation(config):
         x_star_test,
     ) = get_simulation_data(config)
 
-    genModel = LitGenDNN(config).double()
+    genModel = GenDNN(config).double()
     genModel = genModel.to(config.device)
+    genModel, test_loss = train_and_val_GEEN(config, genModel, train_dataloader, val_dataloader, test_dataloader, (x_test, x_star_test))
+    
+    x_gen_train = (
+        genModel(
+            torch.tensor(x_train, device=config.device, dtype=torch.float64).view(
+                -1, 1, config.num_measurement
+            )
+        )
+        .flatten()
+        .detach()
+        .cpu()
+        .numpy()
+        )
+    
+    x_gen_val = (
+        genModel(
+            torch.tensor(x_val, device=config.device, dtype=torch.float64).view(
+                -1, 1, config.num_measurement
+            )
+        )
+        .flatten()
+        .detach()
+        .cpu()
+        .numpy()
+        ) 
+    
+    x_gen_test = (
+        genModel(
+            torch.tensor(x_test, device=config.device, dtype=torch.float64).view(
+                -1, 1, config.num_measurement
+            )
+        )
+        .flatten()
+        .detach()
+        .cpu()
+        .numpy()
+        )   
+    
+    mse = mean_squared_error(x_star_test, x_gen_test, squared=False)
+    corr = np.corrcoef(x_star_test, x_gen_test)[0, 1]
 
     return (
         x_train,
@@ -170,9 +211,9 @@ def simulation(config):
         x_test,
         x_star_test,
         x_gen_test,
-        test_result[0]["test_divergence_loss"],
-        test_result[0]["test_loss"],
-        test_result[0]["test_normalization"],
+        test_loss,
+        mse,
+        corr
     )
 
 # COMMAND ----------
@@ -207,13 +248,10 @@ for k, v in simulations.items():
             x_test,
             x_star_test,
             x_gen_test,
-            test_divergence_loss,
             test_loss,
-            test_normalization,
+            mse,
+            corr
         ) = simulation(config)
-
-        mse = mean_squared_error(x_star_test, x_gen_test, squared=False)
-        corr = np.corrcoef(x_star_test, x_gen_test)[0, 1]
 
         test_mse_list.append(mse)
         test_corr_list.append(corr)
@@ -245,7 +283,7 @@ for k, v in simulations.items():
     df = pd.DataFrame.from_records([record])
     df.to_csv(
         os.path.join(
-            config["dir"], "results", "%s_simulation_res.csv" % simulation_name
+            config.dir, "results", "%s_simulation_res.csv" % simulation_name
         ),
         index=False,
     )
@@ -253,7 +291,7 @@ for k, v in simulations.items():
     df_cor = pd.DataFrame(data=test_corr_list, columns=["corr"])
     df_cor.to_csv(
         os.path.join(
-            config["dir"], "results", "%s_simulation_corr.csv" % simulation_name
+            config.dir, "results", "%s_simulation_corr.csv" % simulation_name
         ),
         index=False,
     )
@@ -271,7 +309,7 @@ for k, v in simulations.items():
     )
     df_data.to_csv(
         os.path.join(
-            config["dir"], "results", "%s_simulation_res_data.csv" % simulation_name
+            config.dir, "results", "%s_simulation_res_data.csv" % simulation_name
         ),
         index=False,
     )
