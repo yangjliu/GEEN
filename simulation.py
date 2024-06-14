@@ -39,9 +39,9 @@ init_config = {
                'hidden_size': 10,
                'learning_rate': 0.05,
                'number_simulation':25,
-               'dir': '/dbfs/mnt/gti/GEEN' #TODO
+               'dir': '/dbfs/mnt/prod/GEEN' 
                }
-init_config = SimpleNamespace(**init_config)
+#init_config = SimpleNamespace(**init_config)
 
 # COMMAND ----------
 
@@ -226,6 +226,7 @@ for k, v in simulations.items():
         simulation_name = simulation_name + '-x4_distinct'
     config = copy.deepcopy(init_config)
     config = config | v
+    config = SimpleNamespace(**config)
 
     test_mse_list = []
     test_corr_list = []

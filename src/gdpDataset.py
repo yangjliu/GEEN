@@ -17,7 +17,7 @@ class GDPDataset(Dataset):
 
 def get_GDPdata(gdp_data, config, random_seed=0):
     np.random.seed(random_seed)
-
+        
     train_data, test_data = train_test_split(gdp_data, test_size=0.2)
     
     n_train, n_test = train_data.shape[0], test_data.shape[0]

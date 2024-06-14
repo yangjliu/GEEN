@@ -105,7 +105,7 @@ init_config = {
                'learning_rate': 0.05,
                'number_simulation':5,
                }
-init_config = SimpleNamespace(**init_config)
+#init_config = SimpleNamespace(**init_config)
 
 
 # COMMAND ----------
@@ -113,6 +113,7 @@ init_config = SimpleNamespace(**init_config)
 # DBTITLE 1,To test training
 if False:
     config = copy.deepcopy(init_config)
+    config = SimpleNamespace(**config)
     config.lm = 0.1
     config.window_size = float(1 * 1.06)
     config.window_size_star = float(1 * 1.06)
@@ -127,6 +128,7 @@ def train_GEEN_whyperopt(params, init_config):
     else:
         lm = 0
     window_size = params["window_size"]
+    config = SimpleNamespace(**config)
     config.lm = float(lm)
     config.window_size = float(window_size * 1.06)
     config.window_size_star = float(window_size * 1.06)
